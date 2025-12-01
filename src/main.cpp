@@ -43,6 +43,7 @@ void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type);
 void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len);
 void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
 void processDevices();
+void processMasterSniffedDevices();
 void calculatePosition(uint8_t* mac);
 float rssiToDistance(int rssi);
 void hashMac(uint8_t* mac, char* output);
@@ -51,6 +52,7 @@ void connectMQTT();
 void publishPosition(const char* deviceId, float x, float y);
 int findDevice(uint8_t* mac);
 int findTriangulationData(uint8_t* mac);
+int findPositionSlot(int triIndex, float x, float y);
 
 void setup() {
   Serial.begin(115200);
@@ -62,13 +64,33 @@ void setup() {
   } else {
     Serial.println("WiFi Sniffer SLAVE Node");
   }
+  Serial.println("=================================");
+  
+  Serial.print("Device Position: X=");
+  Serial.print(DEVICE_X);
+  Serial.print(", Y=");
+  Serial.println(DEVICE_Y);
+  Serial.print("WiFi Channel: 6");
+  Serial.print("\nWiFi SSID: ");
+  Serial.println(WIFI_SSID);
+  Serial.print("MQTT Server: ");
+  Serial.print(MQTT_SERVER);
+  Serial.print(":");
+  Serial.println(MQTT_PORT);
+  Serial.print("MQTT Topic: ");
+  Serial.println(MQTT_TOPIC);
   Serial.println("=================================\n");
 
+  WiFi.mode(WIFI_MODE_STA);
+  
   if (IS_MASTER) {
     connectWiFi();
     mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
     connectMQTT();
+    esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
+    Serial.println("Channel set to 6 for ESP-NOW");
   } else {
+    esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
     Serial.print("Master MAC configured as: ");
     for (int i = 0; i < 6; i++) {
       Serial.printf("%02X", masterAddress[i]);
@@ -76,8 +98,6 @@ void setup() {
     }
     Serial.println();
   }
-  
-  WiFi.mode(WIFI_MODE_STA);
   
   if (IS_MASTER) {
     uint8_t mac[6];
@@ -101,7 +121,7 @@ void setup() {
   if (!IS_MASTER) {
     esp_now_peer_info_t peerInfo = {};
     memcpy(peerInfo.peer_addr, masterAddress, 6);
-    peerInfo.channel = 0;
+    peerInfo.channel = 6;
     peerInfo.encrypt = false;
     esp_now_add_peer(&peerInfo);
   }
@@ -109,13 +129,7 @@ void setup() {
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_promiscuous_rx_cb(&snifferCallback);
   
-  Serial.println("Promiscuous mode enabled - Sniffing started");
-  if (!IS_MASTER) {
-    Serial.print("Slave position: X=");
-    Serial.print(DEVICE_X);
-    Serial.print(", Y=");
-    Serial.println(DEVICE_Y);
-  }
+  Serial.println("\nPromiscuous mode enabled - Sniffing started\n");
 }
 
 void loop() {
@@ -125,6 +139,12 @@ void loop() {
     }
     mqttClient.loop();
     
+    static unsigned long lastMasterReport = 0;
+    if (millis() - lastMasterReport > SLAVE_REPORT_INTERVAL) {
+      processMasterSniffedDevices();
+      lastMasterReport = millis();
+    }
+    
     if (millis() - lastMqttPublish > MQTT_PUBLISH_INTERVAL) {
       processDevices();
       lastMqttPublish = millis();
@@ -132,6 +152,7 @@ void loop() {
   } else {
     static unsigned long lastReport = 0;
     if (millis() - lastReport > SLAVE_REPORT_INTERVAL) {
+      int reportsSent = 0;
       for (int i = 0; i < deviceCount; i++) {
         if (millis() - devices[i].timestamp < RSSI_TIMEOUT) {
           SlaveReport report;
@@ -141,8 +162,22 @@ void loop() {
           report.y = DEVICE_Y;
           
           esp_now_send(masterAddress, (uint8_t*)&report, sizeof(report));
+          delay(50);
+          
+          reportsSent++;
         }
       }
+      
+      #if DEBUG_LEVEL >= 1
+      if (reportsSent > 0) {
+        Serial.print("[SLAVE] Sent ");
+        Serial.print(reportsSent);
+        Serial.print(" reports (");
+        Serial.print(deviceCount);
+        Serial.println(" tracked)");
+      }
+      #endif
+      
       lastReport = millis();
     }
   }
@@ -165,6 +200,13 @@ void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
   int idx = findDevice(mac);
   if (idx == -1 && deviceCount < MAX_DEVICES) {
     idx = deviceCount++;
+    
+    #if DEBUG_LEVEL >= 2 && !IS_MASTER
+    Serial.print("[SNIFFER] New device | RSSI: ");
+    Serial.print(rssi);
+    Serial.print(" dBm | Total: ");
+    Serial.println(deviceCount);
+    #endif
   }
   
   if (idx != -1) {
@@ -177,6 +219,18 @@ void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
 void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
   if (!IS_MASTER) return;
   
+  if (!esp_now_is_peer_exist(mac_addr)) {
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, mac_addr, 6);
+    peerInfo.channel = 6;
+    peerInfo.encrypt = false;
+    esp_now_add_peer(&peerInfo);
+    
+    #if DEBUG_LEVEL >= 2
+    Serial.println("[MASTER] Registered new slave");
+    #endif
+  }
+  
   SlaveReport* report = (SlaveReport*)data;
   
   int idx = findTriangulationData(report->mac);
@@ -186,23 +240,79 @@ void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
     triangulationBuffer[idx].reportCount = 0;
   }
   
-  if (idx != -1 && triangulationBuffer[idx].reportCount < 3) {
-    int pos = triangulationBuffer[idx].reportCount;
-    triangulationBuffer[idx].rssi[pos] = report->rssi;
-    triangulationBuffer[idx].positions[pos][0] = report->x;
-    triangulationBuffer[idx].positions[pos][1] = report->y;
-    triangulationBuffer[idx].reportCount++;
-    triangulationBuffer[idx].timestamp = millis();
+  if (idx != -1) {
+    int posSlot = findPositionSlot(idx, report->x, report->y);
+    
+    if (posSlot != -1) {
+      triangulationBuffer[idx].rssi[posSlot] = report->rssi;
+      triangulationBuffer[idx].timestamp = millis();
+    } else if (triangulationBuffer[idx].reportCount < 3) {
+      int pos = triangulationBuffer[idx].reportCount;
+      triangulationBuffer[idx].rssi[pos] = report->rssi;
+      triangulationBuffer[idx].positions[pos][0] = report->x;
+      triangulationBuffer[idx].positions[pos][1] = report->y;
+      triangulationBuffer[idx].reportCount++;
+      triangulationBuffer[idx].timestamp = millis();
+    }
+    
+    #if DEBUG_LEVEL >= 2
+    Serial.print("[MASTER] Rx from (");
+    Serial.print(report->x);
+    Serial.print(",");
+    Serial.print(report->y);
+    Serial.print(") | RSSI: ");
+    Serial.print(report->rssi);
+    Serial.print(" | Reports: ");
+    Serial.print(triangulationBuffer[idx].reportCount);
+    Serial.println("/3");
+    #endif
   }
 }
 
 void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  #if DEBUG_LEVEL >= 2 && !IS_MASTER
+  if (status != ESP_NOW_SEND_SUCCESS) {
+    Serial.println("[ESP-NOW] Send FAILED!");
+  }
+  #endif
+}
+
+void processMasterSniffedDevices() {
+  if (!IS_MASTER) return;
+  
+  for (int i = 0; i < deviceCount; i++) {
+    if (millis() - devices[i].timestamp < RSSI_TIMEOUT) {
+      int idx = findTriangulationData(devices[i].mac);
+      if (idx == -1 && triangulationCount < MAX_DEVICES) {
+        idx = triangulationCount++;
+        memcpy(triangulationBuffer[idx].mac, devices[i].mac, 6);
+        triangulationBuffer[idx].reportCount = 0;
+      }
+      
+      if (idx != -1) {
+        int posSlot = findPositionSlot(idx, DEVICE_X, DEVICE_Y);
+        
+        if (posSlot != -1) {
+          triangulationBuffer[idx].rssi[posSlot] = devices[i].rssi;
+          triangulationBuffer[idx].timestamp = millis();
+        } else if (triangulationBuffer[idx].reportCount < 3) {
+          int pos = triangulationBuffer[idx].reportCount;
+          triangulationBuffer[idx].rssi[pos] = devices[i].rssi;
+          triangulationBuffer[idx].positions[pos][0] = DEVICE_X;
+          triangulationBuffer[idx].positions[pos][1] = DEVICE_Y;
+          triangulationBuffer[idx].reportCount++;
+          triangulationBuffer[idx].timestamp = millis();
+        }
+      }
+    }
+  }
 }
 
 void processDevices() {
   for (int i = 0; i < triangulationCount; i++) {
-    if (triangulationBuffer[i].reportCount >= 2 && 
+    if (triangulationBuffer[i].reportCount == 3 && 
         millis() - triangulationBuffer[i].timestamp < RSSI_TIMEOUT) {
+      
       calculatePosition(triangulationBuffer[i].mac);
       triangulationBuffer[i].reportCount = 0;
     }
@@ -253,13 +363,15 @@ void calculatePosition(uint8_t* mac) {
   
   publishPosition(hashedMac, x, y);
   
-  Serial.print("Device: ");
+  #if IS_MASTER && DEBUG_LEVEL >= 1
+  Serial.print("[RESULT] ");
   Serial.print(hashedMac);
-  Serial.print(" Position: (");
+  Serial.print(" @ (");
   Serial.print(x);
   Serial.print(", ");
   Serial.print(y);
   Serial.println(")");
+  #endif
 }
 
 float rssiToDistance(int rssi) {
@@ -345,7 +457,13 @@ void publishPosition(const char* deviceId, float x, float y) {
     "{\"id\":\"%s\",\"timestamp\":%lu,\"x\":%.2f,\"y\":%.2f}",
     deviceId, timestamp, x, y);
   
-  mqttClient.publish(MQTT_TOPIC, payload);
+  bool success = mqttClient.publish(MQTT_TOPIC, payload);
+  
+  #if DEBUG_LEVEL >= 2 && IS_MASTER
+  if (!success) {
+    Serial.println("[MQTT] Publish FAILED");
+  }
+  #endif
 }
 
 int findDevice(uint8_t* mac) {
@@ -360,6 +478,18 @@ int findDevice(uint8_t* mac) {
 int findTriangulationData(uint8_t* mac) {
   for (int i = 0; i < triangulationCount; i++) {
     if (memcmp(triangulationBuffer[i].mac, mac, 6) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int findPositionSlot(int triIndex, float x, float y) {
+  if (triIndex == -1) return -1;
+  
+  for (int i = 0; i < triangulationBuffer[triIndex].reportCount; i++) {
+    if (triangulationBuffer[triIndex].positions[i][0] == x &&
+        triangulationBuffer[triIndex].positions[i][1] == y) {
       return i;
     }
   }
