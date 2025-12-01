@@ -2,57 +2,22 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_now.h>
-#include <PubSubClient.h>
-#include "mbedtls/md.h"
 #include "config.h"
-
-typedef struct {
-  uint8_t mac[6];
-  int rssi;
-  unsigned long timestamp;
-} SniffedDevice;
-
-typedef struct {
-  uint8_t mac[6];
-  int rssi;
-  float x;
-  float y;
-} SlaveReport;
+#include "types.h"
+#include "utils.h"
+#include "wifi_sniffer.h"
+#include "espnow_comm.h"
+#include "triangulation.h"
+#include "mqtt_client.h"
 
 SniffedDevice devices[MAX_DEVICES];
 int deviceCount = 0;
 
-typedef struct {
-  uint8_t mac[6];
-  int rssi[3];
-  float positions[3][2];
-  int reportCount;
-  unsigned long timestamp;
-} TriangulationData;
-
 TriangulationData triangulationBuffer[MAX_DEVICES];
 int triangulationCount = 0;
 
-WiFiClient espClient;
-PubSubClient mqttClient(espClient);
+extern uint8_t masterAddress[];
 unsigned long lastMqttPublish = 0;
-
-uint8_t masterAddress[] = MASTER_MAC;
-
-void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type);
-void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len);
-void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
-void processDevices();
-void processMasterSniffedDevices();
-void calculatePosition(uint8_t* mac);
-float rssiToDistance(int rssi);
-void hashMac(uint8_t* mac, char* output);
-void connectWiFi();
-void connectMQTT();
-void publishPosition(const char* deviceId, float x, float y);
-int findDevice(uint8_t* mac);
-int findTriangulationData(uint8_t* mac);
-int findPositionSlot(int triIndex, float x, float y);
 
 void setup() {
   Serial.begin(115200);
@@ -85,7 +50,7 @@ void setup() {
   
   if (IS_MASTER) {
     connectWiFi();
-    mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+    initMQTT();
     connectMQTT();
     esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
     Serial.println("Channel set to 6 for ESP-NOW");
@@ -110,34 +75,15 @@ void setup() {
     Serial.println("\nConfigure slaves with this MAC in config.h");
   }
   
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("ESP-NOW init failed");
-    return;
-  }
-  
-  esp_now_register_send_cb(onDataSent);
-  esp_now_register_recv_cb(onDataRecv);
-  
-  if (!IS_MASTER) {
-    esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, masterAddress, 6);
-    peerInfo.channel = 6;
-    peerInfo.encrypt = false;
-    esp_now_add_peer(&peerInfo);
-  }
-  
-  esp_wifi_set_promiscuous(true);
-  esp_wifi_set_promiscuous_rx_cb(&snifferCallback);
+  initESPNow();
+  initWiFiSniffer();
   
   Serial.println("\nPromiscuous mode enabled - Sniffing started\n");
 }
 
 void loop() {
   if (IS_MASTER) {
-    if (!mqttClient.connected()) {
-      connectMQTT();
-    }
-    mqttClient.loop();
+    loopMQTT();
     
     static unsigned long lastMasterReport = 0;
     if (millis() - lastMasterReport > SLAVE_REPORT_INTERVAL) {
@@ -183,315 +129,4 @@ void loop() {
   }
   
   delay(10);
-}
-
-void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
-  if (type != WIFI_PKT_MGMT) return;
-  
-  wifi_promiscuous_pkt_t* pkt = (wifi_promiscuous_pkt_t*)buf;
-  wifi_pkt_rx_ctrl_t ctrl = pkt->rx_ctrl;
-  
-  uint8_t* mac = pkt->payload + 10;
-  
-  if (mac[0] & 0x01) return;
-  
-  int rssi = ctrl.rssi;
-  
-  int idx = findDevice(mac);
-  if (idx == -1 && deviceCount < MAX_DEVICES) {
-    idx = deviceCount++;
-    
-    #if DEBUG_LEVEL >= 2 && !IS_MASTER
-    Serial.print("[SNIFFER] New device | RSSI: ");
-    Serial.print(rssi);
-    Serial.print(" dBm | Total: ");
-    Serial.println(deviceCount);
-    #endif
-  }
-  
-  if (idx != -1) {
-    memcpy(devices[idx].mac, mac, 6);
-    devices[idx].rssi = rssi;
-    devices[idx].timestamp = millis();
-  }
-}
-
-void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
-  if (!IS_MASTER) return;
-  
-  if (!esp_now_is_peer_exist(mac_addr)) {
-    esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, mac_addr, 6);
-    peerInfo.channel = 6;
-    peerInfo.encrypt = false;
-    esp_now_add_peer(&peerInfo);
-    
-    #if DEBUG_LEVEL >= 2
-    Serial.println("[MASTER] Registered new slave");
-    #endif
-  }
-  
-  SlaveReport* report = (SlaveReport*)data;
-  
-  int idx = findTriangulationData(report->mac);
-  if (idx == -1 && triangulationCount < MAX_DEVICES) {
-    idx = triangulationCount++;
-    memcpy(triangulationBuffer[idx].mac, report->mac, 6);
-    triangulationBuffer[idx].reportCount = 0;
-  }
-  
-  if (idx != -1) {
-    int posSlot = findPositionSlot(idx, report->x, report->y);
-    
-    if (posSlot != -1) {
-      triangulationBuffer[idx].rssi[posSlot] = report->rssi;
-      triangulationBuffer[idx].timestamp = millis();
-    } else if (triangulationBuffer[idx].reportCount < 3) {
-      int pos = triangulationBuffer[idx].reportCount;
-      triangulationBuffer[idx].rssi[pos] = report->rssi;
-      triangulationBuffer[idx].positions[pos][0] = report->x;
-      triangulationBuffer[idx].positions[pos][1] = report->y;
-      triangulationBuffer[idx].reportCount++;
-      triangulationBuffer[idx].timestamp = millis();
-    }
-    
-    #if DEBUG_LEVEL >= 2
-    Serial.print("[MASTER] Rx from (");
-    Serial.print(report->x);
-    Serial.print(",");
-    Serial.print(report->y);
-    Serial.print(") | RSSI: ");
-    Serial.print(report->rssi);
-    Serial.print(" | Reports: ");
-    Serial.print(triangulationBuffer[idx].reportCount);
-    Serial.println("/3");
-    #endif
-  }
-}
-
-void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  #if DEBUG_LEVEL >= 2 && !IS_MASTER
-  if (status != ESP_NOW_SEND_SUCCESS) {
-    Serial.println("[ESP-NOW] Send FAILED!");
-  }
-  #endif
-}
-
-void processMasterSniffedDevices() {
-  if (!IS_MASTER) return;
-  
-  for (int i = 0; i < deviceCount; i++) {
-    if (millis() - devices[i].timestamp < RSSI_TIMEOUT) {
-      int idx = findTriangulationData(devices[i].mac);
-      if (idx == -1 && triangulationCount < MAX_DEVICES) {
-        idx = triangulationCount++;
-        memcpy(triangulationBuffer[idx].mac, devices[i].mac, 6);
-        triangulationBuffer[idx].reportCount = 0;
-      }
-      
-      if (idx != -1) {
-        int posSlot = findPositionSlot(idx, DEVICE_X, DEVICE_Y);
-        
-        if (posSlot != -1) {
-          triangulationBuffer[idx].rssi[posSlot] = devices[i].rssi;
-          triangulationBuffer[idx].timestamp = millis();
-        } else if (triangulationBuffer[idx].reportCount < 3) {
-          int pos = triangulationBuffer[idx].reportCount;
-          triangulationBuffer[idx].rssi[pos] = devices[i].rssi;
-          triangulationBuffer[idx].positions[pos][0] = DEVICE_X;
-          triangulationBuffer[idx].positions[pos][1] = DEVICE_Y;
-          triangulationBuffer[idx].reportCount++;
-          triangulationBuffer[idx].timestamp = millis();
-        }
-      }
-    }
-  }
-}
-
-void processDevices() {
-  for (int i = 0; i < triangulationCount; i++) {
-    if (triangulationBuffer[i].reportCount == 3 && 
-        millis() - triangulationBuffer[i].timestamp < RSSI_TIMEOUT) {
-      
-      calculatePosition(triangulationBuffer[i].mac);
-      triangulationBuffer[i].reportCount = 0;
-    }
-  }
-}
-
-void calculatePosition(uint8_t* mac) {
-  int idx = findTriangulationData(mac);
-  if (idx == -1) return;
-  
-  TriangulationData* data = &triangulationBuffer[idx];
-  
-  if (data->reportCount < 2) return;
-  
-  float distances[3];
-  for (int i = 0; i < data->reportCount; i++) {
-    distances[i] = rssiToDistance(data->rssi[i]);
-  }
-  
-  float x = 0, y = 0;
-  
-  if (data->reportCount == 2) {
-    x = (data->positions[0][0] + data->positions[1][0]) / 2.0;
-    y = (data->positions[0][1] + data->positions[1][1]) / 2.0;
-  } else {
-    float x1 = data->positions[0][0], y1 = data->positions[0][1], r1 = distances[0];
-    float x2 = data->positions[1][0], y2 = data->positions[1][1], r2 = distances[1];
-    float x3 = data->positions[2][0], y3 = data->positions[2][1], r3 = distances[2];
-    
-    float A = 2*x2 - 2*x1;
-    float B = 2*y2 - 2*y1;
-    float C = r1*r1 - r2*r2 - x1*x1 + x2*x2 - y1*y1 + y2*y2;
-    float D = 2*x3 - 2*x2;
-    float E = 2*y3 - 2*y2;
-    float F = r2*r2 - r3*r3 - x2*x2 + x3*x3 - y2*y2 + y3*y3;
-    
-    if (A*E - B*D != 0) {
-      x = (C*E - F*B) / (E*A - B*D);
-      y = (C*D - A*F) / (B*D - A*E);
-    } else {
-      x = (x1 + x2 + x3) / 3.0;
-      y = (y1 + y2 + y3) / 3.0;
-    }
-  }
-  
-  char hashedMac[65];
-  hashMac(mac, hashedMac);
-  
-  publishPosition(hashedMac, x, y);
-  
-  #if IS_MASTER && DEBUG_LEVEL >= 1
-  Serial.print("[RESULT] ");
-  Serial.print(hashedMac);
-  Serial.print(" @ (");
-  Serial.print(x);
-  Serial.print(", ");
-  Serial.print(y);
-  Serial.println(")");
-  #endif
-}
-
-float rssiToDistance(int rssi) {
-  int txPower = -59;
-  
-  if (rssi == 0) {
-    return -1.0;
-  }
-  
-  float ratio = rssi * 1.0 / txPower;
-  if (ratio < 1.0) {
-    return pow(ratio, 10);
-  } else {
-    float distance = (0.89976) * pow(ratio, 7.7095) + 0.111;
-    return distance;
-  }
-}
-
-void hashMac(uint8_t* mac, char* output) {
-  byte shaResult[32];
-  
-  mbedtls_md_context_t ctx;
-  mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
-  
-  mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 0);
-  mbedtls_md_starts(&ctx);
-  mbedtls_md_update(&ctx, (const unsigned char*)mac, 6);
-  mbedtls_md_finish(&ctx, shaResult);
-  mbedtls_md_free(&ctx);
-  
-  for (int i = 0; i < 16; i++) {
-    sprintf(output + (i * 2), "%02x", shaResult[i]);
-  }
-  output[32] = 0;
-}
-
-void connectWiFi() {
-  Serial.print("Connecting to WiFi");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected");
-    Serial.print("IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\nWiFi connection failed");
-  }
-}
-
-void connectMQTT() {
-  while (!mqttClient.connected()) {
-    Serial.print("Connecting to MQTT...");
-    
-    String clientId = "ESP32-";
-    clientId += String(random(0xffff), HEX);
-    
-    if (mqttClient.connect(clientId.c_str())) {
-      Serial.println("connected");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(mqttClient.state());
-      Serial.println(" retrying in 5s");
-      delay(5000);
-    }
-  }
-}
-
-void publishPosition(const char* deviceId, float x, float y) {
-  if (!mqttClient.connected()) return;
-  
-  char payload[200];
-  unsigned long timestamp = millis();
-  
-  snprintf(payload, sizeof(payload), 
-    "{\"id\":\"%s\",\"timestamp\":%lu,\"x\":%.2f,\"y\":%.2f}",
-    deviceId, timestamp, x, y);
-  
-  bool success = mqttClient.publish(MQTT_TOPIC, payload);
-  
-  #if DEBUG_LEVEL >= 2 && IS_MASTER
-  if (!success) {
-    Serial.println("[MQTT] Publish FAILED");
-  }
-  #endif
-}
-
-int findDevice(uint8_t* mac) {
-  for (int i = 0; i < deviceCount; i++) {
-    if (memcmp(devices[i].mac, mac, 6) == 0) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-int findTriangulationData(uint8_t* mac) {
-  for (int i = 0; i < triangulationCount; i++) {
-    if (memcmp(triangulationBuffer[i].mac, mac, 6) == 0) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-int findPositionSlot(int triIndex, float x, float y) {
-  if (triIndex == -1) return -1;
-  
-  for (int i = 0; i < triangulationBuffer[triIndex].reportCount; i++) {
-    if (triangulationBuffer[triIndex].positions[i][0] == x &&
-        triangulationBuffer[triIndex].positions[i][1] == y) {
-      return i;
-    }
-  }
-  return -1;
 }
