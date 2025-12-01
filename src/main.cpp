@@ -47,22 +47,7 @@ void setup() {
   Serial.println("=================================\n");
 
   WiFi.mode(WIFI_MODE_STA);
-  
-  if (IS_MASTER) {
-    connectWiFi();
-    initMQTT();
-    connectMQTT();
-    esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
-    Serial.println("Channel set to 6 for ESP-NOW");
-  } else {
-    esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
-    Serial.print("Master MAC configured as: ");
-    for (int i = 0; i < 6; i++) {
-      Serial.printf("%02X", masterAddress[i]);
-      if (i < 5) Serial.print(":");
-    }
-    Serial.println();
-  }
+  WiFi.disconnect();
   
   if (IS_MASTER) {
     uint8_t mac[6];
@@ -76,6 +61,23 @@ void setup() {
   }
   
   initESPNow();
+  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
+  
+  if (IS_MASTER) {
+    Serial.println("Channel set to 6 for ESP-NOW");
+    delay(100);
+    connectWiFi();
+    initMQTT();
+    connectMQTT();
+  } else {
+    Serial.print("Master MAC configured as: ");
+    for (int i = 0; i < 6; i++) {
+      Serial.printf("%02X", masterAddress[i]);
+      if (i < 5) Serial.print(":");
+    }
+    Serial.println();
+  }
+  
   initWiFiSniffer();
   
   Serial.println("\nPromiscuous mode enabled - Sniffing started\n");
@@ -108,7 +110,7 @@ void loop() {
           report.y = DEVICE_Y;
           
           esp_now_send(masterAddress, (uint8_t*)&report, sizeof(report));
-          delay(50);
+          delay(10);
           
           reportsSent++;
         }

@@ -81,9 +81,26 @@ void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
 }
 
 void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  #if DEBUG_LEVEL >= 2 && !IS_MASTER
+  #if DEBUG_LEVEL >= 1 && !IS_MASTER
+  static int sendCount = 0;
+  static int failCount = 0;
+  sendCount++;
+  
   if (status != ESP_NOW_SEND_SUCCESS) {
-    Serial.println("[ESP-NOW] Send FAILED!");
+    failCount++;
+    Serial.print("[ESP-NOW] Send FAILED! (");
+    Serial.print(failCount);
+    Serial.print("/");
+    Serial.print(sendCount);
+    Serial.println(")");
+  } else {
+    #if DEBUG_LEVEL >= 2
+    Serial.print("[ESP-NOW] Send OK (");
+    Serial.print(sendCount - failCount);
+    Serial.print("/");
+    Serial.print(sendCount);
+    Serial.println(")");
+    #endif
   }
   #endif
 }

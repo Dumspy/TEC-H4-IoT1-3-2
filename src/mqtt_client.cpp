@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <PubSubClient.h>
 #include "mqtt_client.h"
 #include "config.h"
@@ -26,6 +27,20 @@ void connectWiFi() {
     Serial.println("\nWiFi connected");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
+    
+    uint8_t channel;
+    wifi_second_chan_t second;
+    esp_wifi_get_channel(&channel, &second);
+    Serial.print("WiFi Channel after connect: ");
+    Serial.println(channel);
+    
+    if (channel != 6) {
+      Serial.println("WARNING: Channel changed! Re-setting to 6...");
+      esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
+      esp_wifi_get_channel(&channel, &second);
+      Serial.print("Channel now: ");
+      Serial.println(channel);
+    }
   } else {
     Serial.println("\nWiFi connection failed");
   }
