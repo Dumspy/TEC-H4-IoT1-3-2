@@ -11,7 +11,7 @@
 - **Language**: TypeScript with strict type checking
 - **Runtime**: Node.js
 - **Imports**: Use ES6 imports (`import x from 'y'`), prefer named exports
-- **Formatting**: 2-space indentation, no semicolons unless required
+- **Formatting**: 2-space indentation, no semicolons
 - **Types**: Explicit return types on functions, avoid `any`, use interfaces for objects
 - **Naming**: camelCase for variables/functions, PascalCase for classes/types, UPPER_SNAKE_CASE for constants
 - **Error handling**: Use try-catch with typed Error objects, avoid throwing strings
