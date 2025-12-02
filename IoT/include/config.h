@@ -8,9 +8,12 @@
 #define MQTT_PORT 1883
 #define MQTT_TOPIC "wifi/sniff"
 
-#define DEVICE_X 10.0
-#define DEVICE_Y 10.0
+#define DEVICE_X 0.0
+#define DEVICE_Y 0.0
 
 #define DEBUG_LEVEL 2
+
+#define TZ_OFFSET_SECONDS (1 * 3600)
+#define TZ_DST_OFFSET 0
 
 #endif

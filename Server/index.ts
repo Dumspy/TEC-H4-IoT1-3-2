@@ -16,6 +16,8 @@ const TOPIC = 'wifi/sniff'
 const clientId = `ESP32-${Math.random().toString(16).substring(2, 6)}`
 const DEVICE_TIMEOUT_MS = 5 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 60 * 1000
+const BOUNDARY_PADDING = 1.0
+const MAX_READING_TIME_DIFF_MS = 2000
 
 interface WifiSniffPayload {
   device_id: string
@@ -41,6 +43,13 @@ interface SensorReading {
   sensor_y: number
   rssi: number
   timestamp: number
+}
+
+interface Bounds {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
 }
 
 const deviceReadings = new Map<string, Map<string, SensorReading>>()
@@ -142,6 +151,14 @@ function trilaterate(readings: SensorReading[]): Position | null {
     return null
   }
 
+  const timestamps = readings.map(r => r.timestamp)
+  const maxTime = Math.max(...timestamps)
+  const minTime = Math.min(...timestamps)
+  
+  if (maxTime - minTime > MAX_READING_TIME_DIFF_MS) {
+    return null
+  }
+
   const r1 = readings[0]!
   const r2 = readings[1]!
   const r3 = readings[2]!
@@ -171,6 +188,32 @@ function trilaterate(readings: SensorReading[]): Position | null {
   const y = (A * F - D * C) / denominator
 
   return { x, y }
+}
+
+function getSensorBounds(): Bounds | null {
+  if (knownSensors.size === 0) {
+    return null
+  }
+  
+  const sensors = Array.from(knownSensors.values())
+  const minX = Math.min(...sensors.map(s => s.x))
+  const maxX = Math.max(...sensors.map(s => s.x))
+  const minY = Math.min(...sensors.map(s => s.y))
+  const maxY = Math.max(...sensors.map(s => s.y))
+  
+  return {
+    minX: minX - BOUNDARY_PADDING,
+    maxX: maxX + BOUNDARY_PADDING,
+    minY: minY - BOUNDARY_PADDING,
+    maxY: maxY + BOUNDARY_PADDING
+  }
+}
+
+function isWithinBounds(position: Position, bounds: Bounds): boolean {
+  return position.x >= bounds.minX && 
+         position.x <= bounds.maxX && 
+         position.y >= bounds.minY && 
+         position.y <= bounds.maxY
 }
 
 async function connect() {
@@ -254,12 +297,18 @@ async function connect() {
         const position = trilaterate(readings)
         
         if (position) {
-          devicePositions.set(payload.device_id, { 
-            ...position, 
-            timestamp: payloadTimestamp 
-          })
-          console.log(`Device ${payload.device_id} triangulated position: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}`)
-          broadcastUpdate()
+          const bounds = getSensorBounds()
+          
+          if (bounds && isWithinBounds(position, bounds)) {
+            devicePositions.set(payload.device_id, { 
+              ...position, 
+              timestamp: payloadTimestamp 
+            })
+            console.log(`Device ${payload.device_id} triangulated position: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}`)
+            broadcastUpdate()
+          } else {
+            console.log(`Device ${payload.device_id} position out of bounds: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)} - ignoring`)
+          }
         } else {
           console.log(`Failed to triangulate position for device ${payload.device_id}`)
         }
