@@ -1,10 +1,10 @@
 # Agent Guidelines for Server
 
 ## Build/Test/Lint Commands
-- **Run**: `bun run index.ts` (or main entry point)
-- **Test**: `bun test` (for files matching `*.test.ts`)
-- **Single test**: `bun test <path/to/file.test.ts>`
-- **Type check**: `bun run tsc --noEmit` (if tsconfig.json exists)
+- **Run**: `node index.js` (or `npm run dev` for TypeScript with watch mode)
+- **Test**: _No test script currently defined in package.json_
+- **Single test**: _No test script currently defined in package.json_
+- **Type check**: `npx tsc --noEmit` (if tsconfig.json exists)
 - **Install deps**: `npm install`
 
 ## Code Style

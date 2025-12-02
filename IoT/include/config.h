@@ -11,10 +11,6 @@
 #define DEVICE_X 0.0
 #define DEVICE_Y 0.0
 
-#define MAX_DEVICES 50
-#define RSSI_TIMEOUT 10000
-#define MQTT_PUBLISH_INTERVAL 5000
-
 #define DEBUG_LEVEL 2
 
 #define TZ_OFFSET_SECONDS (1 * 3600)

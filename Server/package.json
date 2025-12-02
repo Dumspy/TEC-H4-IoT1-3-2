@@ -12,7 +12,9 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@types/ws": "^8.18.1",
     "mqtt": "^5.14.1",
-    "mqtt-connection": "^4.1.0"
+    "mqtt-connection": "^4.1.0",
+    "ws": "^8.18.3"
   }
 }
