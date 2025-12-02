@@ -6,5 +6,5 @@ export const CLIENT_ID = `ESP32-${Math.random().toString(16).substring(2, 6)}`
 export const DEVICE_TIMEOUT_MS = 5 * 60 * 1000
 export const CLEANUP_INTERVAL_MS = 60 * 1000
 export const BOUNDARY_PADDING = 1.0
-export const MAX_READING_TIME_DIFF_MS = 2000
+export const MAX_READING_TIME_DIFF_MS = 10000
 export const MAX_SENSORS_PER_DEVICE = 5

@@ -24,6 +24,9 @@
       background: #2a2a2a;
       padding: 1rem 2rem;
       border-bottom: 2px solid #3a3a3a;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     
     h1 {
@@ -42,6 +45,18 @@
     
     .status.connected {
       background: #4ade80;
+    }
+
+    .nav-link {
+      color: #60a5fa;
+      text-decoration: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+
+    .nav-link:hover {
+      background: #3a3a3a;
     }
     
     main {
@@ -101,11 +116,80 @@
     .sensor-id {
       color: #60a5fa;
     }
+
+    .sensor-id.overridden {
+      color: #fbbf24;
+    }
     
     .coords {
       color: #999;
       font-family: 'SF Mono', Monaco, monospace;
       font-size: 0.85rem;
+    }
+
+    .coord-input {
+      background: #0a0a0a;
+      border: 1px solid #3a3a3a;
+      color: #fff;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      width: 60px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 0.85rem;
+      margin: 0 0.25rem;
+    }
+
+    .coord-input:focus {
+      outline: none;
+      border-color: #60a5fa;
+    }
+
+    .sensor-controls {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .btn {
+      background: #3a3a3a;
+      border: none;
+      color: #fff;
+      padding: 0.35rem 0.75rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn:hover {
+      background: #4a4a4a;
+    }
+
+    .btn-primary {
+      background: #60a5fa;
+    }
+
+    .btn-primary:hover {
+      background: #3b82f6;
+    }
+
+    .btn-danger {
+      background: #ef4444;
+    }
+
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+
+    .override-badge {
+      display: inline-block;
+      background: #fbbf24;
+      color: #1a1a1a;
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      margin-left: 0.5rem;
     }
     
     .legend {
@@ -133,6 +217,7 @@
 <body>
   <header>
     <h1><span class="status" id="status"></span>Device Position Tracker</h1>
+    <a href="/readings" class="nav-link">View Readings</a>
   </header>
   
   <main>
@@ -163,6 +248,12 @@
             <polygon points="8,2 14,14 2,14" fill="#60a5fa" />
           </svg>
           <span>Sensor</span>
+        </div>
+        <div class="legend-item">
+          <svg class="legend-icon" viewBox="0 0 16 16">
+            <polygon points="8,2 14,14 2,14" fill="#fbbf24" />
+          </svg>
+          <span>Override</span>
         </div>
       </div>
     </aside>
@@ -279,7 +370,8 @@
       sensors.forEach(sensor => {
         const pos = worldToScreen(sensor.x, sensor.y)
         
-        ctx.fillStyle = '#60a5fa'
+        const color = sensor.isOverridden ? '#fbbf24' : '#60a5fa'
+        ctx.fillStyle = color
         ctx.beginPath()
         ctx.moveTo(pos.x, pos.y - 10)
         ctx.lineTo(pos.x + 9, pos.y + 8)
@@ -287,7 +379,7 @@
         ctx.closePath()
         ctx.fill()
         
-        ctx.fillStyle = '#60a5fa'
+        ctx.fillStyle = color
         ctx.font = '11px sans-serif'
         ctx.textAlign = 'center'
         ctx.fillText(sensor.id, pos.x, pos.y + 25)
@@ -314,6 +406,16 @@
       })
     }
     
+    function formatTimestamp(timestamp) {
+      const now = Date.now()
+      const diff = now - timestamp
+      
+      if (diff < 1000) return 'just now'
+      if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`
+      if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
+      return new Date(timestamp).toLocaleTimeString()
+    }
+    
     function updateSidebar() {
       devicesContainer.innerHTML = devices.length === 0 
         ? '<div style="color: #666; font-size: 0.9rem;">No devices detected</div>'
@@ -321,17 +423,90 @@
           <div class="device-item">
             <div class="device-id">${device.id}</div>
             <div class="coords">x: ${device.x.toFixed(2)}, y: ${device.y.toFixed(2)}</div>
+            <div class="coords" style="margin-top: 0.25rem;">${formatTimestamp(device.timestamp)}</div>
           </div>
         `).join('')
       
       sensorsContainer.innerHTML = sensors.length === 0
         ? '<div style="color: #666; font-size: 0.9rem;">No sensors active</div>'
         : sensors.map(sensor => `
-          <div class="sensor-item">
-            <div class="sensor-id">${sensor.id}</div>
-            <div class="coords">x: ${sensor.x.toFixed(2)}, y: ${sensor.y.toFixed(2)}</div>
+          <div class="sensor-item" data-sensor-id="${sensor.id}">
+            <div class="sensor-id ${sensor.isOverridden ? 'overridden' : ''}">
+              ${sensor.id}
+              ${sensor.isOverridden ? '<span class="override-badge">OVERRIDE</span>' : ''}
+            </div>
+            <div class="coords">
+              x: <input type="number" step="0.1" class="coord-input" data-coord="x" value="${sensor.x.toFixed(2)}" />
+              y: <input type="number" step="0.1" class="coord-input" data-coord="y" value="${sensor.y.toFixed(2)}" />
+            </div>
+            <div class="sensor-controls">
+              <button class="btn btn-primary btn-save">Save</button>
+              ${sensor.isOverridden ? '<button class="btn btn-danger btn-reset">Reset</button>' : ''}
+            </div>
           </div>
         `).join('')
+      
+      document.querySelectorAll('.sensor-item').forEach((item, index) => {
+        const sensor = sensors[index]
+        const saveBtn = item.querySelector('.btn-save')
+        const resetBtn = item.querySelector('.btn-reset')
+        
+        if (saveBtn) {
+          saveBtn.addEventListener('click', () => saveSensorPosition(sensor))
+        }
+        
+        if (resetBtn) {
+          resetBtn.addEventListener('click', () => resetSensorPosition(sensor))
+        }
+      })
+    }
+
+    async function saveSensorPosition(sensor) {
+      const sensorItem = document.querySelector(`[data-sensor-id="${sensor.id}"]`)
+      const xInput = sensorItem.querySelector('[data-coord="x"]')
+      const yInput = sensorItem.querySelector('[data-coord="y"]')
+      
+      const x = parseFloat(xInput.value)
+      const y = parseFloat(yInput.value)
+      
+      if (isNaN(x) || isNaN(y)) {
+        alert('Invalid coordinates')
+        return
+      }
+      
+      try {
+        const response = await fetch('/api/sensors', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sensorId: sensor.id, x, y })
+        })
+        
+        if (!response.ok) {
+          throw new Error('Failed to update sensor position')
+        }
+        
+        console.log('Sensor position updated:', sensor.id)
+      } catch (err) {
+        console.error('Error updating sensor:', err)
+        alert('Failed to update sensor position')
+      }
+    }
+
+    async function resetSensorPosition(sensor) {
+      try {
+        const response = await fetch(`/api/sensors/${encodeURIComponent(sensor.id)}`, {
+          method: 'DELETE'
+        })
+        
+        if (!response.ok) {
+          throw new Error('Failed to reset sensor position')
+        }
+        
+        console.log('Sensor position reset:', sensor.id)
+      } catch (err) {
+        console.error('Error resetting sensor:', err)
+        alert('Failed to reset sensor position')
+      }
     }
     
     const ws = new WebSocket(`ws://${window.location.host}`)

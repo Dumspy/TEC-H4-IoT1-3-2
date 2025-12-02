@@ -2,6 +2,7 @@ import type { Position, Bounds, SensorReading } from '../types/index.js'
 import { BOUNDARY_PADDING } from '../config/constants.js'
 
 export const knownSensors = new Map<string, { x: number, y: number }>()
+const sensorOverrides = new Map<string, { x: number, y: number }>()
 
 export function registerSensor(reading: SensorReading): void {
   const sensorKey = `${reading.sensor_x},${reading.sensor_y}`
@@ -10,12 +11,40 @@ export function registerSensor(reading: SensorReading): void {
   }
 }
 
+export function setSensorOverride(sensorId: string, x: number, y: number): boolean {
+  if (!knownSensors.has(sensorId)) {
+    return false
+  }
+  sensorOverrides.set(sensorId, { x, y })
+  return true
+}
+
+export function clearSensorOverride(sensorId: string): boolean {
+  return sensorOverrides.delete(sensorId)
+}
+
+export function getSensorPosition(sensorId: string): { x: number, y: number } | undefined {
+  return sensorOverrides.get(sensorId) || knownSensors.get(sensorId)
+}
+
+export function getAllSensors(): Array<{ id: string, x: number, y: number, isOverridden: boolean }> {
+  return Array.from(knownSensors.entries()).map(([id, pos]) => {
+    const override = sensorOverrides.get(id)
+    return {
+      id,
+      x: override?.x ?? pos.x,
+      y: override?.y ?? pos.y,
+      isOverridden: !!override
+    }
+  })
+}
+
 export function getSensorBounds(): Bounds | null {
   if (knownSensors.size === 0) {
     return null
   }
   
-  const sensors = Array.from(knownSensors.values())
+  const sensors = getAllSensors()
   const minX = Math.min(...sensors.map(s => s.x))
   const maxX = Math.max(...sensors.map(s => s.x))
   const minY = Math.min(...sensors.map(s => s.y))

@@ -1,7 +1,8 @@
 import { WebSocketServer } from 'ws'
 import type { Server } from 'http'
 import { devicePositions } from '../core/positioning.js'
-import { knownSensors } from '../core/sensors.js'
+import { getAllSensors } from '../core/sensors.js'
+import { deviceReadings } from '../core/readings.js'
 
 let wss: WebSocketServer | null = null
 
@@ -30,10 +31,10 @@ export function broadcastUpdate(): void {
       y: pos.y,
       timestamp: pos.timestamp
     })),
-    sensors: Array.from(knownSensors.entries()).map(([id, pos]) => ({
-      id,
-      x: pos.x,
-      y: pos.y
+    sensors: getAllSensors(),
+    deviceReadings: Array.from(deviceReadings.entries()).map(([deviceId, sensorReadings]) => ({
+      deviceId,
+      readings: Array.from(sensorReadings.values())
     }))
   }
   
