@@ -11,3 +11,16 @@
 
 ## Fælles
 - Debugging og fejlfinding
+
+# Dag 2 (2025-12-02)
+
+## Felix
+- Refactor til mqtt focus med nodejs backend/server
+
+## Lasse
+- NTP
+
+## Eva
+
+## Fælles
+- debugging & testing
