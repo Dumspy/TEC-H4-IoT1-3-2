@@ -1,5 +1,5 @@
 {
-  description = "Bun App";
+  description = "Node.js MQTT Server";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -21,7 +21,7 @@
         devShells = {
           default = pkgs.mkShell rec {
             packages = with pkgs; [
-              bun
+              nodejs_22
               nodePackages.typescript
               nodePackages.typescript-language-server
             ];
