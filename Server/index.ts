@@ -232,8 +232,7 @@ async function connect() {
 
   client.on('message', (topic, message) => {
     try {
-      const data: WifiSniffData = JSON.parse(message.toString())
-      const payload: WifiSniffPayload = JSON.parse(data.payload)
+      const payload: WifiSniffPayload = JSON.parse(message.toString())
       
       const timestampStr = payload.timestamp
         .replace(/\//g, '-')
