@@ -1,8 +1,8 @@
 #include <Arduino.h>
 #include "utils.h"
+#include "types.h"
 #include "mbedtls/md.h"
 #include <stdio.h>
-#include <string.h>
 
 void hashMac(uint8_t* mac, char* output) {
   uint8_t shaResult[32];
@@ -26,27 +26,6 @@ void hashMac(uint8_t* mac, char* output) {
 int findDevice(uint8_t* mac) {
   for (int i = 0; i < deviceCount; i++) {
     if (memcmp(devices[i].mac, mac, 6) == 0) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-int findTriangulationData(uint8_t* mac) {
-  for (int i = 0; i < triangulationCount; i++) {
-    if (memcmp(triangulationBuffer[i].mac, mac, 6) == 0) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-int findPositionSlot(int triIndex, float x, float y) {
-  if (triIndex == -1) return -1;
-  
-  for (int i = 0; i < triangulationBuffer[triIndex].reportCount; i++) {
-    if (triangulationBuffer[triIndex].positions[i][0] == x &&
-        triangulationBuffer[triIndex].positions[i][1] == y) {
       return i;
     }
   }

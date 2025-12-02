@@ -26,25 +26,34 @@
 
 ### Communication Flow
 ```
-Phone WiFi → All ESP32s sniff (RSSI) → Slaves send to Master via ESP-NOW
-                                      ↓
-                          Master triangulates position
-                                      ↓
-                          Hash MAC + publish to MQTT
+Phone WiFi → Each ESP32 sniffs (RSSI) → Hash MAC → Publish to MQTT
+                                                          ↓
+                                             Backend aggregates data
+                                                          ↓
+                                             Backend performs triangulation
 ```
 
 ### Device Roles
-- **MASTER**: Receives ESP-NOW data, triangulates, publishes to MQTT
-- **SLAVE**: Sniffs WiFi, sends RSSI+position to MASTER
+- **All devices**: Sniff WiFi packets, hash MAC addresses, publish RSSI readings to MQTT
+- All devices run identical code and operate independently
 
 ### Configuration
 - All settings in `include/config.h`
-- Set `IS_MASTER true/false` per device
-- Set `DEVICE_X/Y` for physical position
-- Set `MASTER_MAC` on slaves after getting master's MAC
+- Set `DEVICE_X/Y` for physical position of each sensor
+- All devices connect to WiFi infrastructure
+- All devices publish to same MQTT topic
+
+### MQTT Payload Format
+Each device publishes JSON with:
+- `device_id`: SHA-256 hashed MAC address (GDPR compliance)
+- `rssi`: Signal strength in dBm
+- `sensor_x`: X position of this sensor
+- `sensor_y`: Y position of this sensor
+- `timestamp`: Milliseconds since boot
 
 ### Key Design Decisions
-- No broadcast address needed (slaves send directly to master)
-- Only MASTER connects to WiFi infrastructure
+- All devices connect to WiFi infrastructure (no ESP-NOW)
 - SHA-256 hashing for MAC addresses (GDPR compliance)
-- ESP-NOW for low-latency peer-to-peer communication
+- Backend responsible for triangulation (not on-device)
+- Simple, independent operation per device
+- Easy to scale by adding more sensors

@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include "wifi_sniffer.h"
+#include "types.h"
 #include "utils.h"
 #include "config.h"
 
@@ -26,7 +27,7 @@ void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
   if (idx == -1 && deviceCount < MAX_DEVICES) {
     idx = deviceCount++;
     
-    #if DEBUG_LEVEL >= 2 && !IS_MASTER
+    #if DEBUG_LEVEL >= 2
     Serial.print("[SNIFFER] New device | RSSI: ");
     Serial.print(rssi);
     Serial.print(" dBm | Total: ");
