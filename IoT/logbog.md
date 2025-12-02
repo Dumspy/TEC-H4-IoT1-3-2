@@ -19,6 +19,7 @@
 
 ## Lasse
 - NTP
+- tilføjet entry til arbejds-portfolio
 
 ## Eva
 
