@@ -1,8 +1,17 @@
 import mqtt from 'mqtt'
 import { lookup } from 'dns/promises'
+import { WebSocketServer } from 'ws'
+import { createServer } from 'http'
+import { readFileSync } from 'fs'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
 
-const BROKER_HOST = process.env.MQTT_BROKER || 'wilson.local'
-const BROKER_PORT = parseInt(process.env.MQTT_PORT || '1883')
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
+const BROKER_HOST = 'wilson.local'
+const BROKER_PORT = 1883
+const WS_PORT = 8080
 const TOPIC = 'wifi/sniff'
 const clientId = `ESP32-${Math.random().toString(16).substring(2, 6)}`
 
@@ -27,20 +36,55 @@ interface SensorReading {
 }
 
 const deviceReadings = new Map<string, SensorReading[]>()
+const devicePositions = new Map<string, Position & { timestamp: number }>()
+const knownSensors = new Map<string, { x: number, y: number }>()
+
+let wss: WebSocketServer | null = null
+
+function broadcastUpdate(): void {
+  if (!wss) return
+  
+  const update = {
+    devices: Array.from(devicePositions.entries()).map(([id, pos]) => ({
+      id,
+      x: pos.x,
+      y: pos.y,
+      timestamp: pos.timestamp
+    })),
+    sensors: Array.from(knownSensors.entries()).map(([id, pos]) => ({
+      id,
+      x: pos.x,
+      y: pos.y
+    }))
+  }
+  
+  const message = JSON.stringify(update)
+  wss.clients.forEach(client => {
+    if (client.readyState === 1) {
+      client.send(message)
+    }
+  })
+}
 
 function addReading(deviceId: string, reading: SensorReading): boolean {
+  const sensorKey = `${reading.sensor_x},${reading.sensor_y}`
+  if (!knownSensors.has(sensorKey)) {
+    knownSensors.set(sensorKey, { x: reading.sensor_x, y: reading.sensor_y })
+  }
+  
   if (!deviceReadings.has(deviceId)) {
     deviceReadings.set(deviceId, [])
   }
   
   const readings = deviceReadings.get(deviceId)!
   
-  const isDuplicatePosition = readings.some(r => 
+  const existingReadingIndex = readings.findIndex(r => 
     r.sensor_x === reading.sensor_x && r.sensor_y === reading.sensor_y
   )
   
-  if (isDuplicatePosition) {
-    return false
+  if (existingReadingIndex !== -1) {
+    readings[existingReadingIndex] = reading
+    return readings.length === 3
   }
   
   readings.push(reading)
@@ -95,6 +139,37 @@ function trilaterate(readings: SensorReading[]): Position | null {
 }
 
 async function connect() {
+  const httpServer = createServer((req, res) => {
+    if (req.url === '/' || req.url === '/index.html') {
+      try {
+        const html = readFileSync(join(__dirname, 'index.html'), 'utf-8')
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        res.end(html)
+      } catch (err) {
+        res.writeHead(404)
+        res.end('index.html not found')
+      }
+    } else {
+      res.writeHead(404)
+      res.end('Not found')
+    }
+  })
+  
+  httpServer.listen(WS_PORT, () => {
+    console.log(`HTTP server listening on http://localhost:${WS_PORT}`)
+  })
+  
+  wss = new WebSocketServer({ server: httpServer })
+  
+  wss.on('connection', (ws) => {
+    console.log('WebSocket client connected')
+    broadcastUpdate()
+    
+    ws.on('close', () => {
+      console.log('WebSocket client disconnected')
+    })
+  })
+  
   const { address } = await lookup(BROKER_HOST, { family: 4 })
   
   console.log(`Resolved ${BROKER_HOST} to ${address}`)
@@ -138,13 +213,19 @@ async function connect() {
         const position = trilaterate(readings)
         
         if (position) {
+          devicePositions.set(data.device_id, { 
+            ...position, 
+            timestamp: data.timestamp 
+          })
           console.log(`Device ${data.device_id} triangulated position: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}`)
+          broadcastUpdate()
         } else {
           console.log(`Failed to triangulate position for device ${data.device_id}`)
         }
       } else {
         const currentCount = deviceReadings.get(data.device_id)?.length || 0
         console.log(`Collected ${currentCount}/3 readings for device ${data.device_id}`)
+        broadcastUpdate()
       }
     } catch (err) {
       console.error('Error processing message:', err)

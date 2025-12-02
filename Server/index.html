@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Device Position Tracker</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a1a;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    
+    header {
+      background: #2a2a2a;
+      padding: 1rem 2rem;
+      border-bottom: 2px solid #3a3a3a;
+    }
+    
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+    
+    .status {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 0.5rem;
+      background: #666;
+    }
+    
+    .status.connected {
+      background: #4ade80;
+    }
+    
+    main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+    
+    #canvas-container {
+      flex: 1;
+      position: relative;
+      background: #0a0a0a;
+    }
+    
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    
+    aside {
+      width: 300px;
+      background: #2a2a2a;
+      border-left: 2px solid #3a3a3a;
+      padding: 1.5rem;
+      overflow-y: auto;
+    }
+    
+    h2 {
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+      color: #999;
+      text-transform: uppercase;
+      font-weight: 500;
+      font-size: 0.85rem;
+      letter-spacing: 0.5px;
+    }
+    
+    .device-list, .sensor-list {
+      margin-bottom: 2rem;
+    }
+    
+    .device-item, .sensor-item {
+      background: #1a1a1a;
+      padding: 0.75rem;
+      margin-bottom: 0.5rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+    
+    .device-id, .sensor-id {
+      font-weight: 600;
+      color: #4ade80;
+      margin-bottom: 0.25rem;
+    }
+    
+    .sensor-id {
+      color: #60a5fa;
+    }
+    
+    .coords {
+      color: #999;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 0.85rem;
+    }
+    
+    .legend {
+      display: flex;
+      gap: 1rem;
+      margin-top: 2rem;
+      padding-top: 1rem;
+      border-top: 1px solid #3a3a3a;
+    }
+    
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      color: #999;
+    }
+    
+    .legend-icon {
+      width: 16px;
+      height: 16px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span class="status" id="status"></span>Device Position Tracker</h1>
+  </header>
+  
+  <main>
+    <div id="canvas-container">
+      <canvas id="canvas"></canvas>
+    </div>
+    
+    <aside>
+      <div class="device-list">
+        <h2>Devices</h2>
+        <div id="devices"></div>
+      </div>
+      
+      <div class="sensor-list">
+        <h2>ESP32 Sensors</h2>
+        <div id="sensors"></div>
+      </div>
+      
+      <div class="legend">
+        <div class="legend-item">
+          <svg class="legend-icon" viewBox="0 0 16 16">
+            <circle cx="8" cy="8" r="6" fill="#4ade80" />
+          </svg>
+          <span>Device</span>
+        </div>
+        <div class="legend-item">
+          <svg class="legend-icon" viewBox="0 0 16 16">
+            <polygon points="8,2 14,14 2,14" fill="#60a5fa" />
+          </svg>
+          <span>Sensor</span>
+        </div>
+      </div>
+    </aside>
+  </main>
+  
+  <script>
+    const canvas = document.getElementById('canvas')
+    const ctx = canvas.getContext('2d')
+    const statusIndicator = document.getElementById('status')
+    const devicesContainer = document.getElementById('devices')
+    const sensorsContainer = document.getElementById('sensors')
+    
+    let devices = []
+    let sensors = []
+    
+    const PADDING = 60
+    const GRID_SIZE = 50
+    
+    function resizeCanvas() {
+      const container = canvas.parentElement
+      canvas.width = container.clientWidth
+      canvas.height = container.clientHeight
+      draw()
+    }
+    
+    window.addEventListener('resize', resizeCanvas)
+    resizeCanvas()
+    
+    function worldToScreen(x, y) {
+      const bounds = getWorldBounds()
+      const worldWidth = bounds.maxX - bounds.minX
+      const worldHeight = bounds.maxY - bounds.minY
+      
+      const canvasWidth = canvas.width - 2 * PADDING
+      const canvasHeight = canvas.height - 2 * PADDING
+      
+      const scaleX = worldWidth > 0 ? canvasWidth / worldWidth : 1
+      const scaleY = worldHeight > 0 ? canvasHeight / worldHeight : 1
+      const scale = Math.min(scaleX, scaleY, 50)
+      
+      const screenX = PADDING + (x - bounds.minX) * scale + (canvasWidth - worldWidth * scale) / 2
+      const screenY = PADDING + (y - bounds.minY) * scale + (canvasHeight - worldHeight * scale) / 2
+      
+      return { x: screenX, y: screenY, scale }
+    }
+    
+    function getWorldBounds() {
+      const allPoints = [
+        ...devices.map(d => ({ x: d.x, y: d.y })),
+        ...sensors.map(s => ({ x: s.x, y: s.y }))
+      ]
+      
+      if (allPoints.length === 0) {
+        return { minX: -5, maxX: 5, minY: -5, maxY: 5 }
+      }
+      
+      const minX = Math.min(...allPoints.map(p => p.x))
+      const maxX = Math.max(...allPoints.map(p => p.x))
+      const minY = Math.min(...allPoints.map(p => p.y))
+      const maxY = Math.max(...allPoints.map(p => p.y))
+      
+      const marginX = (maxX - minX) * 0.2 || 2
+      const marginY = (maxY - minY) * 0.2 || 2
+      
+      return {
+        minX: minX - marginX,
+        maxX: maxX + marginX,
+        minY: minY - marginY,
+        maxY: maxY + marginY
+      }
+    }
+    
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      
+      drawGrid()
+      drawSensors()
+      drawDevices()
+    }
+    
+    function drawGrid() {
+      const bounds = getWorldBounds()
+      ctx.strokeStyle = '#2a2a2a'
+      ctx.lineWidth = 1
+      
+      for (let x = Math.floor(bounds.minX); x <= Math.ceil(bounds.maxX); x += 1) {
+        const screen = worldToScreen(x, 0)
+        ctx.beginPath()
+        ctx.moveTo(screen.x, PADDING)
+        ctx.lineTo(screen.x, canvas.height - PADDING)
+        ctx.stroke()
+        
+        ctx.fillStyle = '#666'
+        ctx.font = '10px monospace'
+        ctx.textAlign = 'center'
+        ctx.fillText(x.toString(), screen.x, canvas.height - PADDING + 15)
+      }
+      
+      for (let y = Math.floor(bounds.minY); y <= Math.ceil(bounds.maxY); y += 1) {
+        const screen = worldToScreen(0, y)
+        ctx.beginPath()
+        ctx.moveTo(PADDING, screen.y)
+        ctx.lineTo(canvas.width - PADDING, screen.y)
+        ctx.stroke()
+        
+        ctx.fillStyle = '#666'
+        ctx.font = '10px monospace'
+        ctx.textAlign = 'right'
+        ctx.fillText(y.toString(), PADDING - 10, screen.y + 4)
+      }
+    }
+    
+    function drawSensors() {
+      sensors.forEach(sensor => {
+        const pos = worldToScreen(sensor.x, sensor.y)
+        
+        ctx.fillStyle = '#60a5fa'
+        ctx.beginPath()
+        ctx.moveTo(pos.x, pos.y - 10)
+        ctx.lineTo(pos.x + 9, pos.y + 8)
+        ctx.lineTo(pos.x - 9, pos.y + 8)
+        ctx.closePath()
+        ctx.fill()
+        
+        ctx.fillStyle = '#60a5fa'
+        ctx.font = '11px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText(sensor.id, pos.x, pos.y + 25)
+      })
+    }
+    
+    function drawDevices() {
+      devices.forEach(device => {
+        const pos = worldToScreen(device.x, device.y)
+        
+        ctx.fillStyle = '#4ade80'
+        ctx.beginPath()
+        ctx.arc(pos.x, pos.y, 8, 0, Math.PI * 2)
+        ctx.fill()
+        
+        ctx.strokeStyle = '#1a1a1a'
+        ctx.lineWidth = 2
+        ctx.stroke()
+        
+        ctx.fillStyle = '#4ade80'
+        ctx.font = '11px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText(device.id.substring(0, 8), pos.x, pos.y - 15)
+      })
+    }
+    
+    function updateSidebar() {
+      devicesContainer.innerHTML = devices.length === 0 
+        ? '<div style="color: #666; font-size: 0.9rem;">No devices detected</div>'
+        : devices.map(device => `
+          <div class="device-item">
+            <div class="device-id">${device.id}</div>
+            <div class="coords">x: ${device.x.toFixed(2)}, y: ${device.y.toFixed(2)}</div>
+          </div>
+        `).join('')
+      
+      sensorsContainer.innerHTML = sensors.length === 0
+        ? '<div style="color: #666; font-size: 0.9rem;">No sensors active</div>'
+        : sensors.map(sensor => `
+          <div class="sensor-item">
+            <div class="sensor-id">${sensor.id}</div>
+            <div class="coords">x: ${sensor.x.toFixed(2)}, y: ${sensor.y.toFixed(2)}</div>
+          </div>
+        `).join('')
+    }
+    
+    const ws = new WebSocket(`ws://${window.location.host}`)
+    
+    ws.onopen = () => {
+      console.log('WebSocket connected')
+      statusIndicator.classList.add('connected')
+    }
+    
+    ws.onclose = () => {
+      console.log('WebSocket disconnected')
+      statusIndicator.classList.remove('connected')
+    }
+    
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        devices = data.devices || []
+        sensors = data.sensors || []
+        draw()
+        updateSidebar()
+      } catch (err) {
+        console.error('Error parsing message:', err)
+      }
+    }
+    
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error)
+    }
+  </script>
+</body>
+</html>
