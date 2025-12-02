@@ -9,7 +9,7 @@
 
 ## Code Style
 - **Language**: TypeScript with strict type checking
-- **Runtime**: Bun (not Node.js)
+- **Runtime**: Node.js
 - **Imports**: Use ES6 imports (`import x from 'y'`), prefer named exports
 - **Formatting**: 2-space indentation, no semicolons unless required
 - **Types**: Explicit return types on functions, avoid `any`, use interfaces for objects
