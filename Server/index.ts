@@ -14,13 +14,21 @@ const BROKER_PORT = 1883
 const WS_PORT = 8080
 const TOPIC = 'wifi/sniff'
 const clientId = `ESP32-${Math.random().toString(16).substring(2, 6)}`
+const DEVICE_TIMEOUT_MS = 5 * 60 * 1000
+const CLEANUP_INTERVAL_MS = 60 * 1000
 
-interface WifiSniffData {
+interface WifiSniffPayload {
   device_id: string
   rssi: number
   sensor_x: number
   sensor_y: number
-  timestamp: number
+  timestamp: string
+}
+
+interface WifiSniffData {
+  timestamp: string
+  topic: string
+  payload: string
 }
 
 interface Position {
@@ -35,7 +43,7 @@ interface SensorReading {
   timestamp: number
 }
 
-const deviceReadings = new Map<string, SensorReading[]>()
+const deviceReadings = new Map<string, Map<string, SensorReading>>()
 const devicePositions = new Map<string, Position & { timestamp: number }>()
 const knownSensors = new Map<string, { x: number, y: number }>()
 
@@ -66,6 +74,27 @@ function broadcastUpdate(): void {
   })
 }
 
+function cleanupStaleDevices(): void {
+  const now = Date.now()
+  let cleanedCount = 0
+  
+  for (const [deviceId, position] of devicePositions.entries()) {
+    if (now - position.timestamp > DEVICE_TIMEOUT_MS) {
+      devicePositions.delete(deviceId)
+      deviceReadings.delete(deviceId)
+      cleanedCount++
+      console.log(`Cleaned up stale device: ${deviceId} (last seen ${Math.floor((now - position.timestamp) / 1000)}s ago)`)
+    }
+  }
+  
+  if (cleanedCount > 0) {
+    console.log(`Cleanup complete: removed ${cleanedCount} stale device(s)`)
+    broadcastUpdate()
+  }
+}
+
+const MAX_SENSORS_PER_DEVICE = 5
+
 function addReading(deviceId: string, reading: SensorReading): boolean {
   const sensorKey = `${reading.sensor_x},${reading.sensor_y}`
   if (!knownSensors.has(sensorKey)) {
@@ -73,33 +102,39 @@ function addReading(deviceId: string, reading: SensorReading): boolean {
   }
   
   if (!deviceReadings.has(deviceId)) {
-    deviceReadings.set(deviceId, [])
+    deviceReadings.set(deviceId, new Map())
   }
   
   const readings = deviceReadings.get(deviceId)!
   
-  const existingReadingIndex = readings.findIndex(r => 
-    r.sensor_x === reading.sensor_x && r.sensor_y === reading.sensor_y
-  )
+  readings.set(sensorKey, reading)
   
-  if (existingReadingIndex !== -1) {
-    readings[existingReadingIndex] = reading
-    return readings.length === 3
+  if (readings.size > MAX_SENSORS_PER_DEVICE) {
+    const sortedReadings = Array.from(readings.entries())
+      .sort((a, b) => a[1].timestamp - b[1].timestamp)
+    
+    const oldestKey = sortedReadings[0]![0]
+    readings.delete(oldestKey)
   }
   
-  readings.push(reading)
-  
-  if (readings.length > 3) {
-    readings.shift()
-  }
-  
-  return readings.length === 3
+  return readings.size >= 3
 }
 
 function rssiToDistance(rssi: number): number {
   const txPower = -59
   const n = 2.0
   return Math.pow(10, (txPower - rssi) / (10 * n))
+}
+
+function getRecentReadings(deviceId: string, count: number = 3): SensorReading[] {
+  const readings = deviceReadings.get(deviceId)
+  if (!readings) {
+    return []
+  }
+  
+  return Array.from(readings.values())
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, count)
 }
 
 function trilaterate(readings: SensorReading[]): Position | null {
@@ -198,33 +233,41 @@ async function connect() {
   client.on('message', (topic, message) => {
     try {
       const data: WifiSniffData = JSON.parse(message.toString())
+      const payload: WifiSniffPayload = JSON.parse(data.payload)
+      
+      const timestampStr = payload.timestamp
+        .replace(/\//g, '-')
+        .replace(' ', 'T')
+        .replace(/(\d{2}):(\d{2}):(\d{2}):(\d{3})$/, '$1:$2:$3.$4')
+      const payloadTimestamp = new Date(timestampStr).getTime()
       
       const reading: SensorReading = {
-        sensor_x: data.sensor_x,
-        sensor_y: data.sensor_y,
-        rssi: data.rssi,
-        timestamp: data.timestamp
+        sensor_x: payload.sensor_x,
+        sensor_y: payload.sensor_y,
+        rssi: payload.rssi,
+        timestamp: payloadTimestamp
       }
       
-      const hasThreeReadings = addReading(data.device_id, reading)
+      const hasThreeReadings = addReading(payload.device_id, reading)
       
       if (hasThreeReadings) {
-        const readings = deviceReadings.get(data.device_id)!
+        const readings = getRecentReadings(payload.device_id, 3)
         const position = trilaterate(readings)
         
         if (position) {
-          devicePositions.set(data.device_id, { 
+          devicePositions.set(payload.device_id, { 
             ...position, 
-            timestamp: data.timestamp 
+            timestamp: payloadTimestamp 
           })
-          console.log(`Device ${data.device_id} triangulated position: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}`)
+          console.log(`Device ${payload.device_id} triangulated position: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}`)
           broadcastUpdate()
         } else {
-          console.log(`Failed to triangulate position for device ${data.device_id}`)
+          console.log(`Failed to triangulate position for device ${payload.device_id}`)
         }
       } else {
-        const currentCount = deviceReadings.get(data.device_id)?.length || 0
-        console.log(`Collected ${currentCount}/3 readings for device ${data.device_id}`)
+        const readings = deviceReadings.get(payload.device_id)
+        const currentCount = readings ? readings.size : 0
+        console.log(`Collected ${currentCount}/3 readings for device ${payload.device_id}`)
         broadcastUpdate()
       }
     } catch (err) {
@@ -244,6 +287,9 @@ async function connect() {
   client.on('reconnect', () => {
     console.log('Attempting to reconnect...')
   })
+  
+  setInterval(cleanupStaleDevices, CLEANUP_INTERVAL_MS)
+  console.log(`Cleanup interval started: checking for stale devices every ${CLEANUP_INTERVAL_MS / 1000}s`)
 }
 
 connect().catch(console.error)
