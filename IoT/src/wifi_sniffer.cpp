@@ -2,9 +2,9 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include "wifi_sniffer.h"
-#include "types.h"
 #include "utils.h"
 #include "config.h"
+#include "mqtt_client.h"
 
 void initWiFiSniffer() {
   esp_wifi_set_promiscuous(true);
@@ -23,21 +23,14 @@ void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
   
   int rssi = ctrl.rssi;
   
-  int idx = findDevice(mac);
-  if (idx == -1 && deviceCount < MAX_DEVICES) {
-    idx = deviceCount++;
-    
-    #if DEBUG_LEVEL >= 2
-    Serial.print("[SNIFFER] New device | RSSI: ");
-    Serial.print(rssi);
-    Serial.print(" dBm | Total: ");
-    Serial.println(deviceCount);
-    #endif
-  }
+  char hashedMac[65];
+  hashMac(mac, hashedMac);
   
-  if (idx != -1) {
-    memcpy(devices[idx].mac, mac, 6);
-    devices[idx].rssi = rssi;
-    devices[idx].timestamp = millis();
-  }
+  publishSniffedDevice(hashedMac, rssi, DEVICE_X, DEVICE_Y);
+  
+  #if DEBUG_LEVEL >= 2
+  Serial.print("[SNIFFER] Device | RSSI: ");
+  Serial.print(rssi);
+  Serial.println(" dBm");
+  #endif
 }

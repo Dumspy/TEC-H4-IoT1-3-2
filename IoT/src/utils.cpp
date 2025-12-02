@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include "utils.h"
-#include "types.h"
 #include "mbedtls/md.h"
 #include <stdio.h>
 
@@ -21,13 +20,4 @@ void hashMac(uint8_t* mac, char* output) {
     sprintf(output + (i * 2), "%02x", shaResult[i]);
   }
   output[32] = 0;
-}
-
-int findDevice(uint8_t* mac) {
-  for (int i = 0; i < deviceCount; i++) {
-    if (memcmp(devices[i].mac, mac, 6) == 0) {
-      return i;
-    }
-  }
-  return -1;
 }
