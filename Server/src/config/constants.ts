@@ -2,6 +2,7 @@ export const BROKER_HOST = 'wilson.local'
 export const BROKER_PORT = 1883
 export const WS_PORT = 8080
 export const TOPIC = 'wifi/sniff'
+export const RESULTS_TOPIC = 'wifi/results'
 export const CLIENT_ID = `ESP32-${Math.random().toString(16).substring(2, 6)}`
 export const DEVICE_TIMEOUT_MS = 5 * 60 * 1000
 export const CLEANUP_INTERVAL_MS = 60 * 1000

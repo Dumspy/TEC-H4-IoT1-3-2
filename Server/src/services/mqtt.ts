@@ -1,11 +1,13 @@
 import mqtt from 'mqtt'
 import { lookup } from 'dns/promises'
 import type { WifiSniffPayload, SensorReading } from '../types/index.js'
-import { BROKER_HOST, BROKER_PORT, TOPIC, CLIENT_ID } from '../config/constants.js'
+import { BROKER_HOST, BROKER_PORT, TOPIC, RESULTS_TOPIC, CLIENT_ID } from '../config/constants.js'
 import { addReading, getRecentReadings } from '../core/readings.js'
 import { registerSensor, getSensorBounds, isWithinBounds } from '../core/sensors.js'
 import { devicePositions, trilaterate } from '../core/positioning.js'
 import { broadcastUpdate } from './websocket.js'
+
+let mqttClient: mqtt.MqttClient | null = null
 
 export async function connectMQTT(): Promise<void> {
   const { address } = await lookup(BROKER_HOST, { family: 4 })
@@ -21,6 +23,8 @@ export async function connectMQTT(): Promise<void> {
     reconnectPeriod: 5000,
     connectTimeout: 30000
   })
+
+  mqttClient = client
 
   client.on('connect', () => {
     console.log('Connected to MQTT broker')
@@ -67,6 +71,18 @@ export async function connectMQTT(): Promise<void> {
               timestamp: payloadTimestamp 
             })
             console.log(`Device ${payload.device_id} triangulated position: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}`)
+            
+            if (mqttClient) {
+              const positionPayload = JSON.stringify({
+                device_id: payload.device_id,
+                x: position.x,
+                y: position.y,
+                timestamp: payloadTimestamp
+              })
+              mqttClient.publish(RESULTS_TOPIC, positionPayload)
+              console.log(`Published position to ${RESULTS_TOPIC}`)
+            }
+            
             broadcastUpdate()
           } else {
             console.log(`Device ${payload.device_id} position out of bounds: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)} - ignoring`)
