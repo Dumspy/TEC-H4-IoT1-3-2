@@ -5,7 +5,7 @@
 - **Test**: `bun test` (for files matching `*.test.ts`)
 - **Single test**: `bun test <path/to/file.test.ts>`
 - **Type check**: `bun run tsc --noEmit` (if tsconfig.json exists)
-- **Install deps**: `bun install`
+- **Install deps**: `npm install`
 
 ## Code Style
 - **Language**: TypeScript with strict type checking
