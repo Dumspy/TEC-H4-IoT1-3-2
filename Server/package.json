@@ -1,0 +1,20 @@
+{
+  "name": "server",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.ts",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@types/ws": "^8.18.1",
+    "mqtt": "^5.14.1",
+    "mqtt-connection": "^4.1.0",
+    "ws": "^8.18.3"
+  }
+}
