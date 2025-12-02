@@ -3,6 +3,7 @@
 #include "types.h"
 #include "mbedtls/md.h"
 #include <stdio.h>
+#include <time.h>
 
 void hashMac(uint8_t* mac, char* output) {
   uint8_t shaResult[32];
@@ -30,4 +31,19 @@ int findDevice(uint8_t* mac) {
     }
   }
   return -1;
+}
+
+void formatTimestamp(time_t now, char* output, size_t size) {
+  struct tm timeinfo;
+  localtime_r(&now, &timeinfo);
+  
+  uint32_t ms = (millis() % 1000);
+  snprintf(output, size, "%04d/%02d/%02d %02d:%02d:%02d:%03lu",
+    1900 + timeinfo.tm_year,
+    1 + timeinfo.tm_mon,
+    timeinfo.tm_mday,
+    timeinfo.tm_hour,
+    timeinfo.tm_min,
+    timeinfo.tm_sec,
+    (unsigned long)ms);
 }
