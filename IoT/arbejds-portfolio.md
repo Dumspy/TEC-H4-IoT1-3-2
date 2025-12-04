@@ -118,7 +118,7 @@ Løsningen består af flere små IoT-enheder (ESP32) placeret rundt i klasseloka
 - Netværk: Sender anonymiserede rapporter (hash af MAC, RSSI, sensorens x,y og tidsstempel) til en MQTT-broker.
 - Web Server: Læser rapporter fra MQTT-broker og republisher x og y koordinat når den får 3 rapporter på samme hashed MAC adresse (1 fra hver sensor)
 
-Arkitektur (kort):
+Arkitektur:
 
 - Sensorlag: Flere ESP32-enheder i kendte positioner (angivet som `DEVICE_X`/`DEVICE_Y`).
 - Kommunikationslag: MQTT over WiFi til central lagring.

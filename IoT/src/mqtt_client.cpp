@@ -31,7 +31,6 @@ void connectWiFi() {
     Serial.println(WiFi.localIP());
     
     // Sync time with NTP server
-    // Denmark: UTC+2 during daylight saving (summer time)
     configTime(TZ_OFFSET_SECONDS, TZ_DST_OFFSET, "pool.ntp.org", "time.nist.gov");
     Serial.println("Syncing time with NTP...");
     time_t now = time(nullptr);
