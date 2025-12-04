@@ -40,7 +40,7 @@ export function broadcastUpdate(): void {
   
   const message = JSON.stringify(update)
   wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.readyState === 1) {
       client.send(message)
     }
   })

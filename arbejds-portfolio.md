@@ -112,6 +112,43 @@ Opgavens karakter er udpræget eksplorativ. Det vil sige at I skal undersøge hv
 
 ### Hvordan ser løsningen ud?
 
+Løsningen består af flere små IoT-enheder (ESP32) placeret rundt i klasselokalet. Hver enhed fungerer som en passiv WiFi-sniffer og som netværksklient:
+
+- Sniffer: Kører WiFi i promiscuous mode og opsamler MAC adresser og RSSI.
+- Netværk: Sender anonymiserede rapporter (hash af MAC, RSSI, sensorens x,y og tidsstempel) til en MQTT-broker.
+- Web Server: Læser rapporter fra MQTT-broker og republisher x og y koordinat når den får 3 rapporter på samme hashed MAC adresse (1 fra hver sensor)
+
+Arkitektur (kort):
+
+- Sensorlag: Flere ESP32-enheder i kendte positioner (angivet som `DEVICE_X`/`DEVICE_Y`).
+- Kommunikationslag: MQTT over WiFi til central lagring.
+- Behandlingslag: Web server abonnerer på MQTT, samler målinger, konverterer RSSI -> afstand og udfører triangulering for at estimere position.
+
+Teknologier: ESP32 (Arduino framework), WiFi promiscuous sniffing, SHA-256 hashing for pseudonymisering, NTP for tidsstempler, MQTT (PubSubClient) og en simpel RSSI->afstand-model + triangulerings-algoritme.
+
 ### Dataprocess
 
+Primær dataopsamling:
+
+- Hver sensor opsamler: hashed device id (SHA-256 af MAC), RSSI, sensor_x, sensor_y og et NTP-synkroniseret tidsstempel i formatet `yyyy/MM/dd hh:mm:ss:ms`.
+
+Data-berigelse og behandling:
+
+- Server samler samtidige målinger for samme hashed id fra flere sensorer inden for et lille tidsvindue.
+- RSSI-værdier omregnes til grove afstandsskøn, ved tre uafhængige målinger udføres trilateration/triangulering for at estimere position.
+
+Data lagring og publicering:
+
+- Hver sensor publicerer JSON til MQTT med felter: `device_id`, `rssi`, `sensor_x`, `sensor_y`, `timestamp`.
+
 ### Datasikkerhed
+
+Hvilke data er personlige?
+
+- MAC-adresser er identifikatorer som, i kombination med tid og position, kan afsløre bevægelsesmønstre og dermed være følsomme.
+
+Risici ved berigelse:
+
+- Kombination af MAC + tid + sted øger risikoen for re-identifikation. Derfor må data behandles efter princippet om dataminimering.
+
+Derfor bliver MAC-adresser hashet inden de sendes til mqtt-broker, så vi aldrig gemmer rå MAC-adresser
