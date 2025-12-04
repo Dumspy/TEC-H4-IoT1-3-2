@@ -191,6 +191,27 @@
       font-weight: 600;
       margin-left: 0.5rem;
     }
+
+    .pause-btn {
+      background: #3a3a3a;
+      border: none;
+      color: #fff;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background 0.2s;
+      margin-right: 1rem;
+    }
+
+    .pause-btn:hover {
+      background: #4a4a4a;
+    }
+
+    .pause-btn.paused {
+      background: #fbbf24;
+      color: #1a1a1a;
+    }
     
     .legend {
       display: flex;
@@ -217,7 +238,10 @@
 <body>
   <header>
     <h1><span class="status" id="status"></span>Device Position Tracker</h1>
-    <a href="/readings" class="nav-link">View Readings</a>
+    <div>
+      <button id="pause-btn" class="pause-btn" title="Pause updates">⏸</button>
+      <a href="/readings" class="nav-link">View Readings</a>
+    </div>
   </header>
   
   <main>
@@ -416,7 +440,7 @@
       return new Date(timestamp).toLocaleTimeString()
     }
     
-    function updateSidebar() {
+    function updateDevicesList() {
       devicesContainer.innerHTML = devices.length === 0 
         ? '<div style="color: #666; font-size: 0.9rem;">No devices detected</div>'
         : devices.map(device => `
@@ -426,7 +450,9 @@
             <div class="coords" style="margin-top: 0.25rem;">${formatTimestamp(device.timestamp)}</div>
           </div>
         `).join('')
-      
+    }
+    
+    function updateSensorsList() {
       sensorsContainer.innerHTML = sensors.length === 0
         ? '<div style="color: #666; font-size: 0.9rem;">No sensors active</div>'
         : sensors.map(sensor => `
@@ -459,6 +485,11 @@
           resetBtn.addEventListener('click', () => resetSensorPosition(sensor))
         }
       })
+    }
+    
+    function updateSidebar() {
+      updateDevicesList()
+      updateSensorsList()
     }
 
     async function saveSensorPosition(sensor) {
@@ -509,6 +540,67 @@
       }
     }
     
+    let previousSensors = []
+    
+    function sensorsChanged(newSensors) {
+      if (previousSensors.length !== newSensors.length) return true
+      
+      for (let i = 0; i < newSensors.length; i++) {
+        const prev = previousSensors[i]
+        const curr = newSensors[i]
+        
+        if (prev.id !== curr.id || 
+            prev.x !== curr.x || 
+            prev.y !== curr.y || 
+            prev.isOverridden !== curr.isOverridden) {
+          return true
+        }
+      }
+      
+      return false
+    }
+    
+    function saveFocusState() {
+      const active = document.activeElement
+      if (active && active.classList.contains('coord-input')) {
+        const sensorItem = active.closest('.sensor-item')
+        if (sensorItem) {
+          return {
+            sensorId: sensorItem.dataset.sensorId,
+            coord: active.dataset.coord,
+            value: active.value,
+            selectionStart: active.selectionStart,
+            selectionEnd: active.selectionEnd
+          }
+        }
+      }
+      return null
+    }
+    
+    function restoreFocusState(focusState) {
+      if (!focusState) return
+      
+      const sensorItem = document.querySelector(`[data-sensor-id="${focusState.sensorId}"]`)
+      if (!sensorItem) return
+      
+      const input = sensorItem.querySelector(`[data-coord="${focusState.coord}"]`)
+      if (input) {
+        input.value = focusState.value
+        input.focus()
+        input.setSelectionRange(focusState.selectionStart, focusState.selectionEnd)
+      }
+    }
+    
+    let isPaused = false
+    
+    const pauseBtn = document.getElementById('pause-btn')
+    pauseBtn.addEventListener('click', () => {
+      isPaused = !isPaused
+      pauseBtn.textContent = isPaused ? '▶' : '⏸'
+      pauseBtn.classList.toggle('paused')
+      pauseBtn.title = isPaused ? 'Resume updates' : 'Pause updates'
+    })
+    
     const ws = new WebSocket(`ws://${window.location.host}`)
     
     ws.onopen = () => {
@@ -522,12 +614,27 @@
     }
     
     ws.onmessage = (event) => {
+      if (isPaused) return
+      
       try {
         const data = JSON.parse(event.data)
         devices = data.devices || []
-        sensors = data.sensors || []
+        
+        const newSensors = data.sensors || []
+        const sensorDataChanged = sensorsChanged(newSensors)
+        
         draw()
-        updateSidebar()
+        
+        if (sensorDataChanged) {
+          const focusState = saveFocusState()
+          sensors = newSensors
+          previousSensors = JSON.parse(JSON.stringify(newSensors))
+          updateSidebar()
+          restoreFocusState(focusState)
+        } else {
+          sensors = newSensors
+          updateDevicesList()
+        }
       } catch (err) {
         console.error('Error parsing message:', err)
       }
