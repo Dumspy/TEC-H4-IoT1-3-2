@@ -25,3 +25,23 @@
 
 ## Fælles
 - debugging & testing
+
+# Dag 3 (2025-12-03)
+
+## Felix
+- R&R
+
+## Lasse
+- R&R
+
+## Eva
+
+# Dag 4 (2025-12-04)
+
+## Felix
+- UI fix
+
+## Lasse
+- Små rettelser
+
+## Eva
